@@ -1,40 +1,36 @@
-import os
-import uuid
-from urllib.parse import unquote_plus
+import csv
 import boto3
+from io import StringIO, BytesIO
+from itertools import batched
 from PIL import Image
 
-SOURCE_BUCKET = ''
-DESTINATION_BUCKET = ''
+s3 = boto3.client('s3')
+DESTINATION = "skyekoch-images-output"
 
-s3_client = boto3.client('s3')
+def get_image_colors(bucket, key):
+    resp = s3.get_object(Bucket=bucket, Key=key)
+    with Image.open(BytesIO(resp['Body'].read())) as img:
+        return img.getcolors(maxcolors=img.size[0] * img.size[1])
 
-def get_colors(download_path):
-    with Image.open(download_path) as image:
-        image_colors = image.getcolors(maxcolors=1000000)
-    return image_colors
-
-def color_file(image_colors, destination_path):
-    text_colors = "\n".join((f"{color[0]},{color[1]}" for color in image_colors))
-    with open(destination_path, 'w') as color_file:
-        color_file.write(text_colors)
+def create_csv_payload(data):
+    buf = StringIO()
+    writer = csv.writer(buf)
+    for batch in batched(data, 20000):
+        writer.writerows([(x[0], *x[1]) for x in batch])
+    return buf.getvalue()
 
 def lambda_handler(event, context):
+    src_bucket = event['Records'][0]['s3']['bucket']['name']
+    src_key = event['Records'][0]['s3']['object']['key']
     
-    bucket = event['Records'][0]['s3']['bucket']['name']
-    key = unquote_plus(event['Records'][0]['s3']['object']['key'])
-    
-    name, extension = os.path.splitext(key.replace('/', ''))
-    download_path = f"/tmp/{name}"
-    text_file = f"{name}.txt"
-    save_path = f"/tmp/{text_file}"
-
-    s3_client.download_file(bucket, key, download_path)
-
-    image_colors = get_colors(download_path)
-    if image_colors is not None:
-        color_file(image_colors, save_path)
-        s3_client.upload_file(save_path, DESTINATION_BUCKET, f"{uuid.uuid4()}-{text_file}")
-        return True
-    else:
+    #no infinite loops allowed
+    if src_bucket == DESTINATION:
         return False
+
+    colors = get_image_colors(src_bucket, src_key)
+    csv_data = create_csv_payload(colors)
+    
+    out_key = src_key.rsplit('.', 1)[0] + ".csv"
+    s3.put_object(Bucket=DESTINATION, Key=out_key, Body=csv_data)
+    
+    return True
