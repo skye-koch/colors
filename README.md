@@ -1,6 +1,6 @@
 The main goal of this project is to get an arbitrarily large amount of data into my AWS account so I can get some practice processing it and moving it around. 
 
-This function automatically triggered when I upload an image file to my input bucket.
+This function is automatically triggered when I upload an image file to my input bucket.
 
 This lambda:
   - Gets an image from an s3 bucket
